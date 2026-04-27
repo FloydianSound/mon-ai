@@ -1,0 +1,12 @@
+#!/bin/bash
+
+SERVICES=("comfyui" "sd-webui" "ollama")
+
+echo -e "\033[1;34mRestarting AI Stack...\033[0m"
+
+for svc in "${SERVICES[@]}"; do
+    echo -e "Restarting \033[1;36m$svc\033[0m..."
+    systemctl --user restart "$svc"
+done
+
+echo -e "\033[1;32mStack restarted successfully.\033[0m"

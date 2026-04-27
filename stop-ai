@@ -1,0 +1,18 @@
+#!/bin/bash
+
+SERVICES=("comfyui" "sd-webui" "ollama")
+
+echo -e "\033[1;34mStopping AI Stack...\033[0m"
+
+for svc in "${SERVICES[@]}"; do
+    echo -e "Stopping \033[1;36m$svc\033[0m..."
+    systemctl --user stop "$svc"
+done
+
+# Kill any leftover Python/Ollama processes just in case
+echo -e "\033[1;33mCleaning up stray processes...\033[0m"
+pkill -f "main.py"
+pkill -f "launch.py"
+pkill -f "ollama"
+
+echo -e "\033[1;32mStack stopped successfully.\033[0m"
