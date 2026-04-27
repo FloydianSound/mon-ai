@@ -15,9 +15,9 @@ A high-precision, multi-threaded terminal dashboard for monitoring AI workstatio
 - **Economic Estimates:** Real-time monthly/daily cost projections and CO2 footprint tracking.
 
 ### AI Service Monitoring
-- **High-Fidelity AI Feeds:** Dedicated, noise-filtered activity feeds for `comfyui`, `sd-webui`, and `ollama`.
-- **Pure Server-Side Telemetry:** Metrics are polled directly from internal APIs (`/history`, `/progress`, `/metrics`) to ensure accuracy regardless of frontend.
-- **System Journal Integration:** Secondary feed for OS-level events, filtered for non-actionable noise.
+- **Robust Service Discovery:** Service status (`RDY`/`BOOT`/`OFF`) is determined via systemd service lifecycle tracking and raw TCP socket probes. This ensures the dashboard remains accurate even if the AI application becomes unresponsive.
+- **Activity Feed:** Filtered, high-fidelity logs for AI services with visual color-coded markers.
+- **System Journal:** Dedicated, noise-filtered feed for all remaining OS-level journal events.
 
 ## Dashboard Preview
 ![mon-ai Dashboard](dashboard.png)
