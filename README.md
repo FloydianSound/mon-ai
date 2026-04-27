@@ -11,7 +11,7 @@ A high-precision, multi-threaded terminal dashboard for monitoring AI workstatio
 - **ZRAM/Storage:** Stacked bar visualization of RAM efficiency and storage utilization.
 
 ### Energy & Economics
-- **Hydro-Québec Rate D (2026):** Intelligent, dynamic tier-switching (Tier 1/Tier 2) based on daily projected consumption.
+- **Local Utility Rates:** Intelligent, dynamic tier-switching (Tier 1/Tier 2) based on daily projected consumption.
 - **Economic Estimates:** Real-time monthly/daily cost projections and CO2 footprint tracking.
 
 ### AI Service Monitoring

@@ -525,7 +525,7 @@ def main():
                 frame.append(buf_move(23, ax) + f"In:     {C_CYAN}{int(af['in']):>3} CFM{C_RESET}")
                 frame.append(buf_move(24, ax) + f"Ex:     {C_ORANGE}{int(af['ex']):>3} CFM{C_RESET}")
             frame.append(draw_frame(19, (cw*3)+1, cols-(cw*3), 8, "ESTIMATES"))
-            ax = (cw*3)+3; frame.append(buf_move(21, ax) + f"Monthly: {C_GREEN}${en['m_cost']:>5.2f}{C_RESET}"); frame.append(buf_move(22, ax) + f"Daily:   {C_GREEN}${en['d_cost']:>5.2f}{C_RESET} | {C_GREY}{TOTAL_CO2/1000:.1f}kg{C_RESET}"); frame.append(buf_move(23, ax) + f"Today:   {C_YELLOW}{en['d_kwh']:>5.2f} kWh{C_RESET} (Est)"); frame.append(buf_move(24, ax) + f"HQ Rate: {C_CYAN}Tier {en['tier']} ({en['rate']*100:.1f}¢){C_RESET}")
+            ax = (cw*3)+3; frame.append(buf_move(21, ax) + f"Monthly: {C_GREEN}${en['m_cost']:>5.2f}{C_RESET}"); frame.append(buf_move(22, ax) + f"Daily:   {C_GREEN}${en['d_cost']:>5.2f}{C_RESET} | {C_GREY}{TOTAL_CO2/1000:.1f}kg{C_RESET}"); frame.append(buf_move(23, ax) + f"Today:   {C_YELLOW}{en['d_kwh']:>5.2f} kWh{C_RESET} (Est)"); frame.append(buf_move(24, ax) + f"Util Rate: {C_CYAN}Tier {en['tier']} ({en['rate']*100:.1f}¢){C_RESET}")
 
             frame.append(draw_frame(27, 1, cols, 3, "AI SERVICES"))
             ai_line = ""
