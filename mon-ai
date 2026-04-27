@@ -1,0 +1,415 @@
+#!/usr/bin/env python3
+import os
+import time
+import subprocess
+import re
+import sys
+import select
+import tty
+import termios
+import platform
+from datetime import datetime, timedelta
+
+# Colors
+C_BLUE = "\033[38;5;75m"     # CPU / Cold / Idle
+C_D_BLUE = "\033[38;5;26m"   # RAM / ZRAM / Storage
+C_GREEN = "\033[38;5;112m"   # GPU / Warm / Home / WebUI
+C_D_GREEN = "\033[38;5;28m"  # VRAM
+C_YELLOW = "\033[38;5;220m"  # Hot
+C_CYAN = "\033[38;5;81m"     # Borders / Boost / Root / Comfy
+C_RED = "\033[38;5;196m"     # Thermal Limit / Error
+C_ORANGE = "\033[38;5;208m"  # Status ON / Speed / Clock / Ollama
+C_PURPLE = "\033[38;5;141m"  # Power / Boot
+C_WHITE = "\033[38;5;255m"   # Normal text
+C_GREY = "\033[38;5;244m"    # Inactive
+C_RESET = "\033[0m"
+C_BOLD = "\033[1m"
+
+# Global State
+SESSION_WH = 0.0; SESSION_COST = 0.0
+LAST_UPDATE = time.time(); START_TIME = time.time()
+LAST_CPU_E = 0; LAST_CPU_T = 0
+PEAK_W = 0.0
+LAST_CMD = "SYSTEM READY"; CMD_EXPIRE = 0
+LOG_HISTORY = []
+LAST_LOG_TS = datetime.now() - timedelta(seconds=1)
+LAST_LOG_SERVICE = ""; LAST_LOG_MINUTE = ""  
+PREV_CPU_STAT = [0, 0]
+CPU_HW_PATHS = {"pwr": "", "tmp": ""}
+POLL_TIERS = [100, 250, 500, 1000, 2000]
+POLL_IDX = 1; POLL_RATE = 0.25
+
+# --- HARDWARE DETECTION ---
+
+def get_hw_names():
+    cpu_name = "CPU"; gpu_name = "GPU"; disk_name = "NVME STORAGE"
+    try:
+        with open("/proc/cpuinfo", "r") as f:
+            for line in f:
+                if "model name" in line:
+                    cpu_name = line.split(":")[1].strip()
+                    cpu_name = re.sub(r'\(R\)|\(TM\)|Processor|Core', '', cpu_name).strip()
+                    break
+        gpu_out = subprocess.check_output(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"]).decode().strip()
+        gpu_name = gpu_out.replace("NVIDIA ", "").strip()
+        disk_out = subprocess.check_output("lsblk -dno MODEL /dev/nvme0n1", shell=True).decode().strip()
+        if disk_out: disk_name = disk_out
+    except: pass
+    return cpu_name[:25], gpu_name[:25], disk_name[:20]
+
+def find_cpu_sensors():
+    global CPU_HW_PATHS
+    try:
+        hwmons = os.listdir("/sys/class/hwmon")
+        for hw in hwmons:
+            name = open(f"/sys/class/hwmon/{hw}/name").read().strip()
+            if name == "coretemp":
+                CPU_HW_PATHS["tmp"] = f"/sys/class/hwmon/{hw}/temp1_input"; break
+    except: pass
+    rapl_path = "/sys/class/powercap/intel-rapl:0/energy_uj"
+    if os.path.exists(rapl_path):
+        CPU_HW_PATHS["pwr"] = rapl_path
+
+# --- HELPERS ---
+
+def reset_cursor(): print("\033[H\033[?25l", end="")
+def show_cursor(): print("\033[?25h", end="")
+def is_key_pressed(): return select.select([sys.stdin], [], [], 0) == ([sys.stdin], [], [])
+
+def set_status(msg):
+    global LAST_CMD, CMD_EXPIRE
+    clean_msg = re.sub(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])', '', str(msg))
+    LAST_CMD = clean_msg.replace('\n', ' ').strip(); CMD_EXPIRE = time.time() + 5.0
+
+def run_captured(cmd_list):
+    try:
+        res = subprocess.run(cmd_list, capture_output=True, text=True, timeout=10)
+        out = res.stdout.strip() or res.stderr.strip()
+        if out: set_status(out.splitlines()[-1])
+        else: set_status("COMMAND EXECUTED SUCCESSFULLY")
+    except Exception as e: set_status(f"ERROR: {str(e)}")
+
+def get_temp_color(temp_str):
+    try:
+        t = float(re.findall(r"([0-9.]+)", str(temp_str))[0])
+        if t < 45: return C_BLUE
+        if t < 65: return C_GREEN
+        if t < 80: return C_YELLOW
+        return C_RED
+    except: return C_WHITE
+
+def get_service_status(service_name):
+    try:
+        cmd = ["systemctl", "--user", "is-active", service_name]
+        return subprocess.check_output(cmd, stderr=subprocess.STDOUT).decode().strip() == "active"
+    except: return False
+
+def toggle_service(service_name, label):
+    is_on = get_service_status(service_name); action = "stop" if is_on else "start"
+    set_status(f"{'STOPPING' if is_on else 'STARTING'} {label.upper()}...")
+    run_captured(["systemctl", "--user", action, service_name])
+
+def get_gpu_info():
+    try:
+        cmd = ["nvidia-smi", "--query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu,clocks_throttle_reasons.active,clocks.gr,power.draw,pcie.link.gen.current,pcie.link.width.current,pstate", "--format=csv,noheader,nounits"]
+        output = subprocess.check_output(cmd).decode().strip()
+        parts = output.split(", ")
+        util, mem_used, mem_total, temp, throttle, clk_gr, pwr, p_gen, p_wid, pstate = parts
+        u_p = (int(mem_used) / int(mem_total)) * 100
+        reason = ""; is_alert = False; is_active = pstate.strip() in ["P0", "P1", "P2", "P3"]
+        if "0x" in throttle and throttle != "0x0000000000000000" and "Not Active" not in throttle:
+            if any(x in throttle for x in ["Thermal", "0x0000000000000008"]): reason = "THERMAL"; is_alert = True
+            elif any(x in throttle for x in ["Power", "0x0000000000000004"]): reason = "POWER"; is_alert = True
+            elif not is_active: reason = "IDLE"; is_alert = False
+        mhz = float(clk_gr)
+        if mhz > 1950: boost = "OC!"; b_color = C_PURPLE
+        elif mhz > 1560: boost = "BST"; b_color = C_CYAN
+        else: boost = "REG"; b_color = C_ORANGE
+        return {"util": int(util), "used": mem_used, "total": mem_total, "temp": temp, "mem_percent": u_p, "reason": reason, "is_alert": is_alert, "mhz": mhz, "boost": boost, "boost_color": b_color, "pwr": float(pwr), "pcie": f"PCIe {p_gen}.0 x{p_wid}"}
+    except: return None
+
+def get_cpu_info():
+    global LAST_CPU_E, LAST_CPU_T, PREV_CPU_STAT, CPU_HW_PATHS
+    try:
+        with open('/proc/stat', 'r') as f:
+            line = f.readline().split(); vals = [int(x) for x in line[1:8]]
+            total = sum(vals); idle = vals[3] + vals[4]
+        diff_total = total - PREV_CPU_STAT[0]; diff_idle = idle - PREV_CPU_STAT[1]
+        PREV_CPU_STAT = [total, idle]; util = (1 - (diff_idle / diff_total)) * 100 if diff_total > 0 else 0.0
+        try:
+            m_out = subprocess.check_output("grep 'cpu MHz' /proc/cpuinfo | awk '{sum+=$4} END {print sum/NR}'", shell=True).decode().strip()
+            ghz = float(m_out) / 1000
+        except: ghz = 0.0
+        watts = 0.0
+        if CPU_HW_PATHS["pwr"]:
+            try:
+                curr_e = int(open(CPU_HW_PATHS["pwr"]).read()); curr_t = time.time()
+                if LAST_CPU_E > 0: watts = (curr_e - LAST_CPU_E) / 1000000 / (curr_t - LAST_CPU_T)
+                LAST_CPU_E = curr_e; LAST_CPU_T = curr_t
+            except: pass
+        p_disp = f"{watts:.1f}W" if watts > 0 else "N/A"
+        try:
+            base_mhz = int(open("/sys/devices/system/cpu/cpu0/cpufreq/base_frequency").read()) / 1000
+            is_active = ghz > (base_mhz * 0.9)
+        except: is_active = util > 10.0
+        if ghz > 5.6: boost = "OC!"; b_color = C_PURPLE
+        elif ghz > 3.2: boost = "BST"; b_color = C_CYAN
+        else: boost = "REG"; b_color = C_ORANGE
+        temp = "N/A"
+        if CPU_HW_PATHS["tmp"]:
+            try: temp = int(open(CPU_HW_PATHS["tmp"]).read()) / 1000
+            except: pass
+        reason = ""; is_alert = False
+        try:
+            t_v = float(temp)
+            if t_v >= 98: reason = "THERMAL"; is_alert = True
+            elif watts >= 350: reason = "POWER"; is_alert = True
+            elif not is_active and util < 5.0: reason = "IDLE"; is_alert = False
+        except: pass
+        return {"util": util, "load": os.getloadavg(), "temp": temp, "ghz": ghz, "boost": boost, "boost_color": b_color, "reason": reason, "is_alert": is_alert, "pwr": p_disp, "bus": "DMI 4.0 x8"}
+    except: return None
+
+def get_zram_info():
+    try:
+        def to_mb(s):
+            units = {"G": 1024, "M": 1, "K": 1/1024, "B": 1/(1024*1024)}
+            return float(s[:-1]) * units[s[-1].upper()] if s[-1].upper() in units else float(s)
+        out = subprocess.check_output("zramctl --raw --noheadings", shell=True).decode().split()
+        if len(out) >= 4:
+            disk = to_mb(out[2]); data = to_mb(out[3])
+            return {"used": data, "total": disk, "percent": (data/disk)*100 if disk else 0}
+    except: pass
+    return None
+
+def get_nvme_info():
+    try:
+        def get_use(path):
+            out = subprocess.check_output(f"df -B1 {path} --output=used,size", shell=True).decode().splitlines()[1].split()
+            return int(out[0]), int(out[1])
+        root_u, total_sz = get_use("/"); home_u, _ = get_use("/home")
+        return {"root_p": (root_u / total_sz) * 100, "home_p": (home_u / total_sz) * 100, "used_gb": (root_u + home_u) / (1024**3), "total_gb": total_sz / (1024**3)}
+    except: return None
+
+def update_energy(cpu_pwr, gpu_pwr, it_speeds):
+    global SESSION_WH, SESSION_COST, LAST_UPDATE, PEAK_W
+    now = time.time(); dt = now - LAST_UPDATE; LAST_UPDATE = now
+    try: c_w = float(str(cpu_pwr).replace("W", ""))
+    except: c_w = 0.0
+    total_w = (c_w + gpu_pwr + 116.0) / 0.90 # System baseline + 90% PSU eff
+    if total_w > PEAK_W: PEAK_W = total_w
+    
+    wh = (total_w * dt) / 3600; SESSION_WH += wh
+    rate = 0.091; SESSION_COST += (wh / 1000) * rate
+    
+    # Efficiency (it/W)
+    eff = 0.0
+    try:
+        total_it = sum([float(re.findall(r"([0-9.]+)", s)[0]) for s in it_speeds if "it/s" in s or "tk/s" in s])
+        if total_w > 150: eff = total_it / total_w
+    except: pass
+
+    # Next Dollar Prediction
+    try:
+        remaining = 1.0 - (SESSION_COST % 1.0)
+        burn_rate = (total_w / 1000.0) * rate # Cost per hour
+        next_dollar_h = remaining / burn_rate if burn_rate > 0 else 0
+    except: next_dollar_h = 0
+
+    elapsed = (now - START_TIME) / 3600
+    if elapsed > 0.001:
+        avg_w = SESSION_WH / elapsed
+        d_kwh = (avg_w * 24) / 1000; d_cost = d_kwh * rate
+        m_kwh = d_kwh * 30; m_cost = m_kwh * rate
+    else: d_kwh = d_cost = m_kwh = m_cost = 0.0
+    
+    return {
+        "total_w": total_w, "peak_w": PEAK_W, "wh": wh, 
+        "m_kwh": m_kwh, "m_cost": m_cost, "d_cost": d_cost, "d_kwh": d_kwh,
+        "eff": eff, "next_dollar": next_dollar_h, "elapsed": elapsed * 3600
+    }
+
+def get_speed_metrics():
+    c_cur = "N/A"; w_cur = "N/A"; o_cur = "N/A"
+    try:
+        def get_l(svc): return subprocess.check_output(f"journalctl --user -u {svc} -n 50 --no-pager -o cat", shell=True, stderr=subprocess.DEVNULL).decode()
+        c_l = get_l("comfyui.service"); c_m = re.findall(r"([0-9.]+)it/s", c_l)
+        if c_m: c_cur = f"{c_m[-1]} it/s"
+        w_l = get_l("sd-webui.service"); w_m = re.findall(r"(\d+\.\d+)it/s", w_l)
+        if w_m: w_cur = f"{w_m[-1]} it/s"
+        o_l = get_l("ollama.service"); o_m = re.findall(r"eval rate:\s+([0-9.]+)\s+tokens/s", o_l)
+        if o_m: o_cur = f"{o_m[-1]} tk/s"
+        else:
+            g_m = re.findall(r"\| ([0-9.]+)s \|", o_l)
+            if g_m: o_cur = f"Lat: {g_m[-1]}s"
+    except: pass
+    return c_cur, w_cur, o_cur
+
+# --- UI BUFFERED DRAWING ---
+
+def buf_move(y, x): return f"\033[{y};{x}H"
+
+def draw_frame(y, x, w, h, title=""):
+    out = buf_move(y, x) + f"{C_CYAN}┌{'─' * (w-2)}┐{C_RESET}"
+    for i in range(1, h-1): out += buf_move(y+i, x) + f"\033[K"
+    out += buf_move(y+h-1, x) + f"{C_CYAN}└{'─' * (w-2)}┘{C_RESET}"
+    if title: out += buf_move(y, x+2) + f"{C_BOLD}{C_CYAN} {title} {C_RESET}"
+    return out
+
+def draw_bar(y, x, w, percent, color, label, suffix="", boost="", b_color=C_CYAN):
+    bar_w = w - 18
+    if bar_w < 5: bar_w = 5
+    filled = max(0, min(bar_w, int(percent / 100 * bar_w)))
+    bar = f"{color}{'█' * filled}{C_RESET}{C_GREY}{'░' * (bar_w - filled)}{C_RESET}"
+    return buf_move(y, x) + f"\033[K{label:5} {bar} {C_BOLD}{suffix}{C_RESET} {C_BOLD}{b_color}{boost:3}{C_RESET}"
+
+def draw_nvme_stacked(y, x, w, info):
+    bar_w = w - 18
+    if bar_w < 5: bar_w = 5
+    r_f = int(info['root_p'] / 100 * bar_w); h_f = int(info['home_p'] / 100 * bar_w)
+    bar = f"{C_CYAN}{'█' * r_f}{C_GREEN}{'█' * h_f}{C_RESET}{C_GREY}{'░' * (bar_w - r_f - h_f)}{C_RESET}"
+    return buf_move(y, x) + f"\033[K{"NVME":5} {bar} {C_BOLD}{int(info['used_gb'])}GB{C_RESET}"
+
+def fetch_new_logs(cols):
+    global LAST_LOG_TS, LOG_HISTORY, LAST_LOG_SERVICE, LAST_LOG_MINUTE
+    services = [("comfyui.service", "COMFYUI", C_CYAN), ("sd-webui.service", "WEBUI", C_GREEN), ("ollama.service", "OLLAMA", C_ORANGE)]
+    keywords = ["it/s", "tk/s", "token", "error", "exception", "loaded", "loading", "prompt", "inference", "starting", "stopped", "success", "failed", "queue", "server", "version", "gui"]
+    any_new = False; now = datetime.now(); since_str = (LAST_LOG_TS - timedelta(seconds=1)).strftime('%Y-%m-%d %H:%M:%S')
+    for unit, label, color in services:
+        try:
+            cmd = f"journalctl --user -u {unit} --since='{since_str}' --no-pager -o cat"
+            raw = subprocess.check_output(cmd, shell=True, stderr=subprocess.DEVNULL).decode().splitlines()
+            filtered = []
+            for line in raw:
+                clean = line.strip()
+                if not clean or not any(k in clean.lower() for k in keywords) or any(x in clean for x in ["GET /", "POST /", "200 OK", "304 Not"]): continue
+                formatted = f"{color}●{C_RESET} {C_RED if 'ERR' in clean.upper() else (C_ORANGE if 'it/s' in clean else C_WHITE)}{clean[:cols-12]}{C_RESET}"
+                if formatted not in LOG_HISTORY[-10:]: filtered.append(formatted)
+            if filtered:
+                any_new = True
+                curr_min = now.strftime('%H:%M:%S')
+                if label != LAST_LOG_SERVICE or curr_min != LAST_LOG_MINUTE:
+                    LOG_HISTORY.append(f"{C_BOLD}{color}[{label}]{C_RESET} {C_GREY}{now.strftime('%d/%m')} {curr_min}{C_RESET}")
+                    LAST_LOG_SERVICE = label; LAST_LOG_MINUTE = curr_min
+                LOG_HISTORY.extend(filtered)
+        except: pass
+    if any_new: 
+        LAST_LOG_TS = now
+        if len(LOG_HISTORY) > 200: LOG_HISTORY = LOG_HISTORY[-200:]
+
+def main():
+    global LOG_HISTORY, POLL_IDX, POLL_RATE; find_cpu_sensors()
+    old_settings = termios.tcgetattr(sys.stdin)
+    hostname = platform.node(); kernel = platform.release(); c_name, g_name, d_name = get_hw_names()
+    try:
+        tty.setcbreak(sys.stdin.fileno()); print("\033[2J\033[?25l", end="") 
+        while True:
+            cols, rows = os.get_terminal_size()
+            if cols < 110 or rows < 32:
+                print(f"\033[H\033[2J{C_RED}TERMINAL TOO SMALL{C_RESET} | Required: 110x32 | Current: {cols}x{rows}", end="")
+                if is_key_pressed() and sys.stdin.read(1).lower() == 'q': break
+                time.sleep(0.25); continue
+            if is_key_pressed():
+                k = sys.stdin.read(1).lower()
+                if k == 'q': break
+                elif k == 'y': toggle_service("comfyui.service", "ComfyUI")
+                elif k == 'u': toggle_service("sd-webui.service", "WebUI")
+                elif k == 'o': toggle_service("ollama.service", "Ollama")
+                elif k == 's': set_status("INITIALIZING STACK..."); run_captured(["start-ai"])
+                elif k == 'x': set_status("STOPPING STACK..."); run_captured(["stop-ai"])
+                elif k == 'r': set_status("RESTARTING STACK..."); run_captured(["restart-ai"])
+                elif k == 'k': set_status("CLEARING DISPLAY..."); LOG_HISTORY = []
+                elif k == '-': 
+                    if POLL_IDX > 0: POLL_IDX -= 1; POLL_RATE = POLL_TIERS[POLL_IDX]/1000.0; set_status(f"POLLING RATE: {POLL_TIERS[POLL_IDX]}ms")
+                elif k in ['+', '=']:
+                    if POLL_IDX < len(POLL_TIERS) - 1: POLL_IDX += 1; POLL_RATE = POLL_TIERS[POLL_IDX]/1000.0; set_status(f"POLLING RATE: {POLL_TIERS[POLL_IDX]}ms")
+
+            cpu = get_cpu_info(); gpu = get_gpu_info(); zr = get_zram_info(); nvme = get_nvme_info()
+            ram_o = subprocess.check_output("free -m | grep Mem", shell=True).decode().split()
+            ram = {"used": int(ram_o[2]), "total": int(ram_o[1]), "percent": (int(ram_o[2])/int(ram_o[1]))*100}
+            fetch_new_logs(cols); c_s, w_s, o_s = get_speed_metrics()
+            en = update_energy(cpu['pwr'] if cpu else 0, gpu['pwr'] if gpu else 0, [c_s, w_s, o_s])
+            
+            try:
+                gov = open("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor").read().strip()
+            except: gov = "N/A"
+            try:
+                profile = open("/sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference").read().strip()
+            except: profile = "N/A"
+            try:
+                s_o = subprocess.check_output("scxctl list 2>/dev/null", shell=True).decode()
+                match = re.search(r"(\w+)\s+\(active\)", s_o)
+                sched = match.group(1) if match else "EEVDF"
+            except: sched = "EEVDF"
+
+            frame = ["\033[H"]; half_w = cols // 2
+            frame.append(draw_frame(1, 1, cols, 4, f"SYSTEM OVERVIEW"))
+            frame.append(buf_move(2, 3) + f"{C_CYAN}Kernel:{C_RESET} {C_ORANGE}{kernel}{C_RESET}")
+            frame.append(buf_move(2, half_w - 20) + f"{C_CYAN}SCH:{C_RESET} {C_ORANGE}{sched:8}{C_RESET}  {C_CYAN}GOV:{C_RESET} {C_ORANGE}{gov:10}{C_RESET}  {C_CYAN}PRF:{C_RESET} {C_ORANGE}{profile:12}{C_RESET}")
+            frame.append(buf_move(2, cols - 15) + f"{C_BOLD}{C_BLUE}{datetime.now().strftime('%d/%m %H:%M')}{C_RESET}")
+            
+            frame.append(draw_frame(5, 1, half_w, 8, c_name))
+            if cpu:
+                frame.append(draw_bar(7, 3, half_w - 4, cpu['util'], C_BLUE, "UTIL", f"{cpu['util']:>4.1f}%"))
+                frame.append(draw_bar(8, 3, half_w - 4, (cpu['ghz']/6.0)*100, cpu['boost_color'], "FREQ", f"{cpu['ghz']:>4.2f}G", cpu['boost'], cpu['boost_color']))
+                frame.append(draw_bar(9, 3, half_w - 4, ram['percent'], C_D_BLUE, "RAM", f"{ram['used']}MB"))
+                pwr_disp = f"{C_PURPLE}{cpu['pwr']:>6}{C_RESET}" if cpu['pwr'] != "N/A" else f"{C_GREY}N/A{C_RESET}"
+                frame.append(buf_move(10, 3) + f"Power: {pwr_disp} | Temp: {get_temp_color(cpu['temp'])}{cpu['temp']}°C{C_RESET} {C_RED if cpu['is_alert'] else C_BLUE}[{cpu['reason']}]{C_RESET if cpu['reason'] else ''} | Bus: {C_WHITE}{cpu['bus']}{C_RESET}")
+            
+            frame.append(draw_frame(5, half_w + 1, cols - half_w, 8, g_name))
+            if gpu:
+                frame.append(draw_bar(7, half_w + 3, cols - half_w - 4, float(gpu['util']), C_GREEN, "GPU", f"{gpu['util']:>3}%"))
+                frame.append(draw_bar(8, half_w + 3, cols - half_w - 4, (gpu['mhz']/2100.0)*100, gpu['boost_color'], "FREQ", f"{int(gpu['mhz']):>4}M", gpu['boost'], gpu['boost_color']))
+                frame.append(draw_bar(9, half_w + 3, cols - half_w - 4, gpu['mem_percent'], C_D_GREEN, "VRAM", f"{gpu['mem_percent']:>4.1f}%"))
+                frame.append(buf_move(10, half_w + 3) + f"Power: {C_PURPLE}{int(gpu['pwr'])}W{C_RESET} | Temp: {get_temp_color(gpu['temp'])}{gpu['temp']}°C{C_RESET} {C_RED if gpu['is_alert'] else C_BLUE}[{gpu['reason']}]{C_RESET if gpu['reason'] else ''} | Bus: {C_WHITE}{gpu['pcie']}{C_RESET}")
+            
+            frame.append(draw_frame(13, 1, half_w, 8, d_name))
+            if nvme:
+                frame.append(draw_nvme_stacked(15, 3, half_w - 4, nvme)); frame.append(buf_move(16, 3) + f"L: {C_CYAN}Root{C_RESET} {C_GREEN}Home{C_RESET}")
+            if zr:
+                frame.append(draw_bar(18, 3, half_w - 4, zr['percent'], C_ORANGE, "ZRAM", f"{int(zr['used'])}MB"))
+                frame.append(buf_move(19, 3) + f"Z-Cap: {C_WHITE}{int(nvme['total_gb'] if nvme else 2000)}GB{C_RESET}")
+
+            frame.append(draw_frame(13, half_w + 1, cols - half_w, 8, "ENERGY / COST / EFFICIENCY"))
+            e_x = half_w + 3; mid_x = half_w + (cols - half_w)//2
+            # Direct / Session
+            frame.append(buf_move(14, e_x) + f"{C_BOLD}{C_CYAN}[ DIRECT / SESSION ]{C_RESET}")
+            frame.append(buf_move(15, e_x) + f"Live: {C_PURPLE}{int(en['total_w']):>4}W{C_RESET} | Peak: {C_RED}{int(en['peak_w'])}W{C_RESET}")
+            frame.append(buf_move(16, e_x) + f"Sess: {C_YELLOW}{SESSION_WH/1000:>6.2f} kWh{C_RESET} (${SESSION_COST:.2f})")
+            next_d = f"{int(en['next_dollar'])}h {int((en['next_dollar'] % 1) * 60)}m"
+            frame.append(buf_move(17, e_x) + f"Next $1 in: {C_ORANGE}{next_d}{C_RESET}")
+            
+            # Daily / Monthly / Efficiency
+            frame.append(buf_move(14, mid_x) + f"{C_BOLD}{C_CYAN}[ ESTIMATES / EFF ]{C_RESET}")
+            frame.append(buf_move(15, mid_x) + f"| Monthly: {C_GREEN}${en['m_cost']:>6.2f}{C_RESET} ({en['m_kwh']:.0f} kWh)")
+            frame.append(buf_move(16, mid_x) + f"| Daily:   {C_GREEN}${en['d_cost']:>6.2f}{C_RESET}")
+            eff_color = C_GREEN if en['eff'] > 0.05 else (C_YELLOW if en['eff'] > 0.02 else C_GREY)
+            frame.append(buf_move(17, mid_x) + f"| AI Eff:  {eff_color}{en['eff']:.4f} it/W{C_RESET}")
+
+            frame.append(draw_frame(21, 1, cols, 3, "AI SERVICES"))
+            ai_line = ""
+            for i, (n, u, k) in enumerate([("COMFY", "comfyui.service", 'y'), ("WEBUI", "sd-webui.service", 'u'), ("OLLAMA", "ollama.service", 'o')]):
+                act = get_service_status(u); s = c_s if u == "comfyui.service" else (w_s if u == "sd-webui.service" else o_s)
+                status = f"{C_ORANGE}● ON {C_RESET}" if act else f"{C_GREY}○ OFF{C_RESET}"
+                ai_line += f"{C_BOLD}{n:5}{C_RESET} [{k}] {status} {C_ORANGE if act else C_GREY}● {s[:10]}{C_RESET}"
+                if i < 2: ai_line += f"  {C_CYAN}│{C_RESET}  "
+            plain_len = len(re.sub(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])', '', ai_line))
+            frame.append(buf_move(22, (cols - plain_len) // 2) + ai_line)
+
+            log_h = max(4, rows - 30)
+            frame.append(draw_frame(24, 1, cols, log_h + 2, "SERVICE ACTIVITY FEED"))
+            for i, line in enumerate(LOG_HISTORY[-log_h:]): frame.append(buf_move(25 + i, 3) + f"\033[K{line}")
+            
+            frame.append(draw_frame(rows - 3, 1, cols, 3, f"COMMAND STATUS | RATE: {int(POLL_RATE*1000)}ms"))
+            msg = f"{C_BOLD}{C_YELLOW}>> {C_RESET}{C_WHITE}{LAST_CMD}{C_RESET}" if LAST_CMD and time.time() < CMD_EXPIRE else f"{C_GREY}Awaiting command...{C_RESET}"
+            frame.append(buf_move(rows - 2, 3) + msg)
+            frame.append(buf_move(rows, 1) + f"{C_CYAN}── {C_RESET}[s] START | [x] STOP | [r] RESET | [k] CLEAR | [+/-] RATE | [q] QUIT {C_CYAN}──{C_RESET}")
+            sys.stdout.write("".join(frame)); sys.stdout.flush(); time.sleep(POLL_RATE)
+    except KeyboardInterrupt: pass
+    finally:
+        try:
+            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
+            show_cursor()
+        except: pass
+        print("\033[J")
+
+if __name__ == "__main__": main()
