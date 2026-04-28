@@ -17,13 +17,13 @@ import json
 # --- COLORS ---
 C_BLUE = "\033[38;5;75m"     # CPU / Cold / Idle
 C_D_BLUE = "\033[38;5;26m"   # RAM / ZRAM / Storage
-C_GREEN = "\033[38;5;112m"   # GPU / Warm / Home / WebUI
+C_GREEN = "\033[38;5;112m"   # GPU / Warm / Home / WebUI / Ready
 C_D_GREEN = "\033[38;5;28m"  # VRAM
-C_YELLOW = "\033[38;5;220m"  # Hot
-C_CYAN = "\033[38;5;81m"     # Borders / Boost / Root / Comfy
-C_RED = "\033[38;5;196m"     # Thermal Limit / Error
-C_ORANGE = "\033[38;5;208m"  # Status ON / Speed / Clock / Ollama
-C_PURPLE = "\033[38;5;141m"  # Power / Boot
+C_YELLOW = "\033[38;5;220m"  # Hot / Boot
+C_CYAN = "\033[38;5;81m"     # Borders / Boost / Comfy
+C_RED = "\033[38;5;196m"     # Thermal / Error / OpenClaw
+C_ORANGE = "\033[38;5;208m"  # Status ON / Ollama
+C_PURPLE = "\033[38;5;141m"  # Power / Hermes
 C_WHITE = "\033[38;5;255m"   # Normal text
 C_GREY = "\033[38;5;244m"    # Inactive
 C_RESET = "\033[0m"
@@ -55,7 +55,9 @@ PREV_DISK_IO = None
 SERVICE_STATES = {
     "comfyui.service": {"active": False, "port": 8188, "default_port": 8188},
     "sd-webui.service": {"active": False, "port": 7860, "default_port": 7860},
-    "ollama.service": {"active": False, "port": 11434, "default_port": 11434}
+    "ollama.service": {"active": False, "port": 11434, "default_port": 11434},
+    "openclaw-agent.service": {"active": False, "port": 0, "default_port": 0},
+    "hermes-agent.service": {"active": False, "port": 0, "default_port": 0}
 }
 
 # --- HARDWARE DETECTION ---
@@ -146,7 +148,7 @@ def service_worker():
                 cmd = ["systemctl", "--user", "is-active", svc]
                 is_active = subprocess.check_output(cmd, stderr=subprocess.STDOUT).decode().strip() == "active"
                 state["active"] = is_active
-                if is_active:
+                if is_active and state["default_port"] > 0:
                     try:
                         pid = int(subprocess.check_output(["systemctl", "--user", "show", "-p", "MainPID", "--value", svc], timeout=1).strip())
                         if pid > 0:
@@ -191,7 +193,13 @@ def gpu_worker():
 
 def log_worker():
     global LOG_HISTORY, JOURNAL_HISTORY, LAST_LOG_SERVICE, LAST_LOG_MINUTE, LAST_JRN_SERVICE, LAST_JRN_MINUTE, IS_RUNNING
-    services = {"comfyui.service": ("COMFYUI", C_CYAN), "sd-webui.service": ("WEBUI", C_GREEN), "ollama.service": ("OLLAMA", C_ORANGE)}
+    services = {
+        "comfyui.service": ("COMFYUI", C_CYAN), 
+        "sd-webui.service": ("WEBUI", C_GREEN), 
+        "ollama.service": ("OLLAMA", C_ORANGE),
+        "openclaw-agent.service": ("CLAW", C_RED),
+        "hermes-agent.service": ("HERMS", C_PURPLE)
+    }
     proc = subprocess.Popen(["journalctl", "--user", "-f", "-n", "50", "-o", "json"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
     while IS_RUNNING:
         line = proc.stdout.readline()
@@ -208,38 +216,31 @@ def log_worker():
         
         label = ""; color = C_WHITE; is_journal = False
         
-        # --- REWORKED AI ACTIVITY LOGIC ---
-        # 1. Check if this is a primary AI service or its systemd lifecycle
         if unit_name in services:
             label, base_color = services[unit_name]
-            
-            # Clean msg: remove noisy terminal/GIN prefix
             msg = re.sub(r'\[GIN\].*?\||time=".*?"\s+level=.*?\s+msg=', '', msg).strip()
-            
-            # Smart Ollama metadata cleaning
             if label == "OLLAMA":
                 m_match = re.search(r'msg="([^"]+)"', msg)
                 if m_match: msg = m_match.group(1)
-            
-            # Ignore AI Feed noise
+            # Ignore general noise, but keep API calls for AI/Agents
             if any(x in msg for x in ["%|", "it/s", "tk/s"]) or (msg.strip().isdigit() and len(msg) < 5): continue
-            
-            # Dot always matches parent service, message text stays white/red
+            if any(x in msg for x in ["200 OK", "304 Not"]): continue
+
+            # Allow Hermes/Ollama API traffic narration
+            # but still block noisy repeated polls if they become a burden
             msg_color = C_RED if any(x in msg.lower() for x in ["error", "fail", "exception"]) else C_WHITE
             formatted = f"{base_color}●{C_RESET} {msg_color}{msg[:100]}{C_RESET}"
             is_journal = False
         else:
-            # 2. Everything else goes to the SYSTEM JOURNAL
             label = data.get("SYSLOG_IDENTIFIER", "OS")
             color = C_GREY; is_journal = True
-            
-            # System Noise Filter (Discord, etc)
-            if any(x in msg for x in ["preloaded using link preload", "appropriate `as` value"]): continue
+            noise = ["preloaded using link preload", "appropriate `as` value", "mon-ai-state.json", "Brave Search"]
+            if any(x in msg for x in noise): continue
+
+            # Pass systemctl and other OS events, but block generic web logs for OS services
             if any(x in msg for x in ["GET /", "POST /", "200 OK", "304 Not"]): continue
-            
             formatted = f"{C_GREY}●{C_RESET} {msg[:100]}"
 
-        # --- SHARED TIMESTAMPING & ROUTING ---
         try:
             ts_us = int(data.get("__REALTIME_TIMESTAMP", 0))
             now = datetime.fromtimestamp(ts_us / 1000000.0)
@@ -254,7 +255,6 @@ def log_worker():
             if len(JOURNAL_HISTORY) > 200: JOURNAL_HISTORY.pop(0)
         else:
             if label != LAST_LOG_SERVICE or curr_min != LAST_LOG_MINUTE:
-                JOURNAL_HISTORY.append(f"{C_BOLD}{base_color}[{label}]{C_RESET} {C_GREY}{now.strftime('%d/%m')} {curr_sec}{C_RESET}")
                 LOG_HISTORY.append(f"{C_BOLD}{base_color}[{label}]{C_RESET} {C_GREY}{now.strftime('%d/%m')} {curr_sec}{C_RESET}")
                 LAST_LOG_SERVICE = label; LAST_LOG_MINUTE = curr_min
             if not LOG_HISTORY or formatted != LOG_HISTORY[-1]: LOG_HISTORY.append(formatted)
@@ -312,6 +312,7 @@ def reset_cursor(): print("\033[H\033[?25l", end="")
 def show_cursor(): print("\033[?25h", end="")
 def is_key_pressed(): return select.select([sys.stdin], [], [], 0) == ([sys.stdin], [], [])
 def is_port_open(port):
+    if port <= 0: return False
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.settimeout(0.05)
         try: return s.connect_ex(('127.0.0.1', port)) == 0
@@ -393,19 +394,15 @@ def update_energy(cpu_pwr, gpu_pwr, cpu_temp):
     w_t = "↑" if total_w > PREV_W + 2 else ("↓" if total_w < PREV_W - 2 else " ")
     PREV_M_PEAK = m_peak; PREV_W = total_w; PEAK_W = max(PEAK_W, total_w)
     wh = (total_w * dt) / 3600; SESSION_WH += wh; TOTAL_WH += wh
-    
     elapsed = (now - START_TIME) / 3600
     if elapsed > 0.001:
         avg_w = SESSION_WH / elapsed; d_kwh = (avg_w * 24) / 1000
     else: d_kwh = 0.0
-    
     tier = 1 if d_kwh <= 40.0 else 2
     rate = 0.07065 if tier == 1 else 0.11142
-    
     cost = (wh / 1000) * rate; SESSION_COST += cost; TOTAL_COST += cost
     TOTAL_CO2 += (wh / 1000) * 475.0
     if int(now) % 30 == 0: save_state()
-    
     d_cost = d_kwh * rate; m_cost = d_kwh * 30 * rate
     burn = (total_w / 1000.0) * rate; next_d = (1.0 - (SESSION_COST % 1.0)) / burn if burn > 0 else 0
     return {"total_w": total_w, "peak_w": PEAK_W, "m_peak": m_peak, "m_cost": m_cost, "d_cost": d_cost, "next_d": next_d, "w_t": w_t, "p_t": p_t, "rate": rate, "tier": tier, "d_kwh": d_kwh}
@@ -455,10 +452,12 @@ def main():
                 elif k == 'y': toggle_service("comfyui.service", "ComfyUI")
                 elif k == 'u': toggle_service("sd-webui.service", "WebUI")
                 elif k == 'o': toggle_service("ollama.service", "Ollama")
-                elif k == 's': set_status("INITIALIZING STACK..."); run_captured(["start-ai"])
+                elif k == 'c': toggle_service("openclaw-agent.service", "OpenClaw")
+                elif k == 'h': toggle_service("hermes-agent.service", "Hermes")
+                elif k == 's': set_status("STARTING STACK..."); run_captured(["start-ai"])
                 elif k == 'x': set_status("STOPPING STACK..."); run_captured(["stop-ai"])
                 elif k == 'r': set_status("RESTARTING STACK..."); run_captured(["restart-ai"])
-                elif k == 'k': set_status("CLEARING DISPLAY..."); LOG_HISTORY = []; JOURNAL_HISTORY = []
+                elif k == 'k': set_status("CLEARING..."); LOG_HISTORY = []; JOURNAL_HISTORY = []
                 elif k == '-': 
                     if POLL_IDX > 0: POLL_IDX -= 1; POLL_RATE = POLL_TIERS[POLL_IDX]/1000.0; set_status(f"RATE: {POLL_TIERS[POLL_IDX]}ms")
                 elif k in ['+', '=']:
@@ -480,6 +479,14 @@ def main():
             frame.append(buf_move(2, 3) + f"{C_CYAN}Kernel:{C_RESET} {C_ORANGE}{kernel}{C_RESET}")
             frame.append(buf_move(2, half_w-25) + f"{C_CYAN}SCH:{C_RESET} {C_ORANGE}{sched:8}{C_RESET}  {C_CYAN}GOV:{C_RESET} {C_ORANGE}{gov:10}{C_RESET}  {C_CYAN}PRF:{C_RESET} {C_ORANGE}{pref:12}{C_RESET}")
             frame.append(buf_move(2, cols-15) + f"{C_BOLD}{C_BLUE}{datetime.now().strftime('%d/%m %H:%M')}{C_RESET}")
+            
+            # System Uptime
+            try:
+                ut_sec = int(time.time() - psutil.boot_time())
+                d, r = divmod(ut_sec, 86400); h, r = divmod(r, 3600); m, s = divmod(r, 60)
+                uptime = f"{d}d {h}h {m}m" if d > 0 else f"{h}h {m}m {s}s"
+                frame.append(buf_move(3, cols-15) + f"{C_GREY}UP: {uptime}{C_RESET}")
+            except: pass
             
             frame.append(draw_frame(5, 1, half_w, 8, c_name))
             if cpu:
@@ -525,22 +532,59 @@ def main():
                 frame.append(buf_move(23, ax) + f"In:     {C_CYAN}{int(af['in']):>3} CFM{C_RESET}")
                 frame.append(buf_move(24, ax) + f"Ex:     {C_ORANGE}{int(af['ex']):>3} CFM{C_RESET}")
             frame.append(draw_frame(19, (cw*3)+1, cols-(cw*3), 8, "ESTIMATES"))
-            ax = (cw*3)+3; frame.append(buf_move(21, ax) + f"Monthly: {C_GREEN}${en['m_cost']:>5.2f}{C_RESET}"); frame.append(buf_move(22, ax) + f"Daily:   {C_GREEN}${en['d_cost']:>5.2f}{C_RESET} | {C_GREY}{TOTAL_CO2/1000:.1f}kg{C_RESET}"); frame.append(buf_move(23, ax) + f"Today:   {C_YELLOW}{en['d_kwh']:>5.2f} kWh{C_RESET} (Est)"); frame.append(buf_move(24, ax) + f"Util Rate: {C_CYAN}Tier {en['tier']} ({en['rate']*100:.1f}¢){C_RESET}")
+            ax = (cw*3)+3
+            m_co2 = (en['d_cost'] / en['rate'] * 30) * 0.475 # Monthly kg based on daily kwh
+            frame.append(buf_move(21, ax) + f"Monthly: {C_GREEN}${en['m_cost']:>5.2f}{C_RESET} | {C_GREY}{m_co2:.1f}kg{C_RESET}")
+            frame.append(buf_move(22, ax) + f"Daily:   {C_GREEN}${en['d_cost']:>5.2f}{C_RESET} | {C_GREY}{TOTAL_CO2/1000:.1f}kg{C_RESET}")
+            frame.append(buf_move(23, ax) + f"Today:   {C_YELLOW}{en['d_kwh']:>5.2f} kWh{C_RESET} (Est)")
+            frame.append(buf_move(24, ax) + f"Util Rate: {C_CYAN}Tier {en['tier']} ({en['rate']*100:.1f}¢){C_RESET}")
 
-            frame.append(draw_frame(27, 1, cols, 3, "AI SERVICES"))
-            ai_line = ""
+            # Dynamically detect LAN IP (pre-loop or optimized in-loop)
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                s.connect(("8.8.8.8", 80)); lan_ip = s.getsockname()[0]; s.close()
+            except: lan_ip = "127.0.0.1"
+
+            # AI SERVICES & AGENTS Layout (Meticulous Alignment)
+            half_c = cols // 2
+            frame.append(draw_frame(27, 1, half_c, 5, "AI SERVICES"))
             for i, (n, u, k) in enumerate([("COMFY", "comfyui.service", 'y'), ("WEBUI", "sd-webui.service", 'u'), ("OLLAMA", "ollama.service", 'o')]):
                 st = SERVICE_STATES[u]; act = st["active"]; rdy = act and is_port_open(st["port"])
-                status = f"{C_GREEN}● RDY {C_RESET}" if rdy else (f"{C_YELLOW}◐ BOOT{C_RESET}" if act else f"{C_GREY}○ OFF {C_RESET}")
-                ai_line += f"{C_BOLD}{n:5}{C_RESET} {C_GREY}:{C_RESET}{C_YELLOW}{st['port'] if act else '     ':<5}{C_RESET} [{k}] {status}"
-                if i < 2: ai_line += f"  {C_CYAN}│{C_RESET}  "
-            frame.append(buf_move(28, (cols - len(re.sub(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])', '', ai_line))) // 2) + ai_line)
-            
-            avail_h = rows - 33; h2 = max(4, avail_h // 4); h1 = avail_h - h2
-            frame.append(draw_frame(30, 1, cols, h1, "ACTIVITY FEED"))
-            hist_l = list(LOG_HISTORY); [frame.append(buf_move(31+i, 3) + f"\033[K{line}") for i, line in enumerate(hist_l[-(h1-2):])]
-            frame.append(draw_frame(30+h1, 1, cols, h2, "SYSTEM JOURNAL"))
-            hist_j = list(JOURNAL_HISTORY); [frame.append(buf_move(31+h1+i, 3) + f"\033[K{line}") for i, line in enumerate(hist_j[-(h2-2):])]
+                status = f"{C_GREEN}● RDY{C_RESET}" if rdy else (f"{C_YELLOW}◐ BOOT{C_RESET}" if act else f"{C_GREY}○ OFF{C_RESET}")
+                
+                # Padding math: IP (15) + ":" (1) + Port (5) = 21
+                if act:
+                    addr_text = f"{lan_ip}:{st['port']}"
+                    padding = " " * (21 - len(addr_text))
+                    ip_disp = f"{C_GREY}{lan_ip}:{C_RESET}{C_WHITE}{st['port']}{C_RESET}{padding}"
+                else:
+                    ip_disp = " " * 21
+                
+                line = f"{C_BOLD}{n:<7}{C_RESET} {ip_disp} [{k}]  {status}"
+                frame.append(buf_move(28 + i, 3) + line)
+
+            frame.append(draw_frame(27, half_c + 1, cols - half_c, 5, "AGENTS"))
+            for i, (n, u, k, p) in enumerate([("CLAW", "openclaw-agent.service", 'c', "3000"), ("HERMS", "hermes-agent.service", 'h', "DISCORD")]):
+                st = SERVICE_STATES[u]; act = st["active"]
+                status = f"{C_GREEN}● RDY{C_RESET}" if act else f"{C_GREY}○ OFF{C_RESET}"
+                
+                if act:
+                    p_label = f"{C_PURPLE}{p}{C_RESET}" if n == "HERMS" else f"{C_WHITE}{p}{C_RESET}"
+                    addr_text = f"{lan_ip}:{p}"
+                    padding = " " * (21 - len(addr_text))
+                    ip_disp = f"{C_GREY}{lan_ip}:{C_RESET}{p_label}{padding}"
+                else:
+                    ip_disp = " " * 21
+                
+                line = f"{C_BOLD}{n:<7}{C_RESET} {ip_disp} [{k}]  {status}"
+                frame.append(buf_move(28 + i, half_c + 3) + line)
+
+            # Adjust Feed start to row 32
+            avail_h = rows - 35; h2 = max(4, avail_h // 4); h1 = avail_h - h2
+            frame.append(draw_frame(32, 1, cols, h1, "ACTIVITY FEED"))
+            hist_l = list(LOG_HISTORY); [frame.append(buf_move(33 + i, 3) + f"\033[K{line}") for i, line in enumerate(hist_l[-(h1-2):])]
+            frame.append(draw_frame(32 + h1, 1, cols, h2, "SYSTEM JOURNAL"))
+            hist_j = list(JOURNAL_HISTORY); [frame.append(buf_move(33 + h1 + i, 3) + f"\033[K{line}") for i, line in enumerate(hist_j[-(h2-2):])]
 
             msg = f"{C_BOLD}{C_YELLOW}>> {C_RESET}{C_WHITE}{LAST_CMD}{C_RESET}" if time.time() < CMD_EXPIRE else f"{C_GREY}Awaiting...{C_RESET}"
             frame.append(draw_frame(rows-3, 1, cols, 3, f"COMMAND | RATE: {int(POLL_RATE*1000)}ms"))
