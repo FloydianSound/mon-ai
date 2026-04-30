@@ -1,6 +1,6 @@
 #!/bin/bash
 
-SERVICES=("comfyui" "sd-webui" "ollama")
+SERVICES=("comfyui" "sd-webui" "ollama" "hermes-agent")
 
 echo -e "\033[1;34mStarting AI Stack...\033[0m"
 
@@ -10,4 +10,4 @@ for svc in "${SERVICES[@]}"; do
 done
 
 echo -e "\033[1;32mStack started successfully.\033[0m"
-echo -e "Monitor available at: \033[1;35mcomfy-mon\033[0m"
+echo -e "Monitor available at: \033[1;35mmon-ai\033[0m"
