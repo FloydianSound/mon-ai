@@ -478,9 +478,23 @@ def main():
             vm = psutil.virtual_memory(); t_mb = vm.total/1048576; u_mb = (vm.used-vm.cached-vm.buffers)/1048576; c_mb = (vm.cached+vm.buffers)/1048576
             ram = {"perc_u": u_mb/t_mb*100, "perc_c": c_mb/t_mb*100}
             du = psutil.disk_usage('/'); en = update_energy(cpu['pwr'] if cpu else 0, gpu['pwr'] if gpu else 0, cpu['temp'] if cpu else 40)
+            # --- SYSTEM TELEMETRY (GOV/PRF/SCHED) ---
+            gov = "N/A"; pref = "N/A"; sched = "EEVDF"
             try:
-                gov = open("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor").read().strip()
-                pref = open("/sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference").read().strip()
+                # 1. CPU Governor
+                if os.path.exists("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor"):
+                    gov = open("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor").read().strip().upper()
+                
+                # 2. Performance Preference (EPP)
+                pref_path = next((p for p in [
+                    "/sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference",
+                    "/sys/devices/system/cpu/cpu0/cpufreq/scaling_energy_performance_preference"
+                ] if os.path.exists(p)), None)
+                if pref_path:
+                    raw_pref = open(pref_path).read().strip().upper()
+                    pref = raw_pref.replace("BALANCE_", "BAL_").replace("PERFORMANCE", "PERF")
+                
+                # 3. Scheduler Detection (BPF/EEVDF)
                 try:
                     with open("/sys/kernel/sched_ext/root/ops", "r") as f:
                         s_raw = f.read().lower()
@@ -488,8 +502,8 @@ def main():
                 except:
                     s_o = subprocess.check_output("scxctl list 2>/dev/null", shell=True).decode()
                     match = re.search(r"(\w+)\s+\(active\)", s_o)
-                    sched = match.group(1).upper() if match else "EEVDF"
-            except: gov = pref = sched = "N/A"
+                    if match: sched = match.group(1).upper()
+            except: pass
 
             frame = ["\033[H"]; half_w = cols // 2; box_w = half_w - 4; cw = cols // 4
             frame.append(draw_frame(1, 1, cols, 4, "MON-AI DASHBOARD"))
