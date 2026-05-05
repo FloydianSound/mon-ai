@@ -561,7 +561,10 @@ def main():
             frame.append(draw_frame(13, 1, half_w, 6, f"{d_name} THROUGHPUT"))
             io_segs = [((IO_SPEEDS["read"]/3500.0)*100, C_CYAN, "█"), ((IO_SPEEDS["write"]/3500.0)*100, C_GREEN, "█")]
             frame.append(draw_stacked_bar(15, 3, box_w, io_segs, "DISK", f"{int(IO_SPEEDS['read']+IO_SPEEDS['write']):>4}M/s"))
-            frame.append(buf_move(16, 3) + f"   {C_CYAN}Read ({int(IO_SPEEDS['read'])}MB/s){C_RESET}  {C_GREEN}Write ({int(IO_SPEEDS['write'])}MB/s){C_RESET}  {C_WHITE}Cap:{int(du.percent)}%{C_RESET}")
+            # Sub-labels
+            r_spd = IO_SPEEDS["read"]; w_spd = IO_SPEEDS["write"]
+            frame.append(buf_move(16, 3) + f"{C_WHITE}Read   : {C_CYAN}{r_spd:>6.1f}M{C_RESET} {C_GREY}│{C_RESET} {C_WHITE}Write  : {C_GREEN}{w_spd:>6.1f}M{C_RESET}")
+            frame.append(buf_move(17, 3) + f"{C_WHITE}Cap    : {C_WHITE}{int(du.percent):>6d}%{C_RESET}")
             
             frame.append(draw_frame(13, half_w+1, cols-half_w, 6, "ZRAM"))
             if zr:
