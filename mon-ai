@@ -436,11 +436,15 @@ def draw_bar(y, x, w, percent, color, label, suffix="", boost="", b_color=C_CYAN
 def draw_stacked_bar(y, x, w, segments, label, suffix=""):
     bar_w = w - 18
     fills = []; total_fill = 0
-    for p, _ in segments:
-        f = int(max(0, p) / 100 * bar_w); fills.append(f); total_fill += f
+    for p, color, char in segments:
+        f = int(max(0, p) / 100 * bar_w)
+        fills.append([f, color, char]); total_fill += f
     while total_fill > bar_w:
-        idx = fills.index(max(fills)); fills[idx] -= 1; total_fill -= 1
-    bar = "".join([f"{segments[i][1]}{'█' * f}{C_RESET}" for i, f in enumerate(fills) if f > 0])
+        max_idx = 0; max_val = -1
+        for i, (f, _, _) in enumerate(fills):
+            if f > max_val: max_val = f; max_idx = i
+        fills[max_idx][0] -= 1; total_fill -= 1
+    bar = "".join([f"{c}{char * f}{C_RESET}" for f, c, char in fills if f > 0])
     bar += f"{C_GREY}{'░' * (bar_w - total_fill)}{C_RESET}"
     return buf_move(y, x) + f"\033[K{label:5} {bar} {C_BOLD}{suffix:>6}{C_RESET}    "
 
@@ -475,8 +479,13 @@ def main():
                     if POLL_IDX < len(POLL_TIERS)-1: POLL_IDX += 1; POLL_RATE = POLL_TIERS[POLL_IDX]/1000.0; set_status(f"RATE: {POLL_TIERS[POLL_IDX]}ms")
             
             cpu = get_cpu_info(); gpu = GPU_INFO; zr = get_zram_info()
-            vm = psutil.virtual_memory(); t_mb = vm.total/1048576; u_mb = (vm.used-vm.cached-vm.buffers)/1048576; c_mb = (vm.cached+vm.buffers)/1048576
-            ram = {"perc_u": u_mb/t_mb*100, "perc_c": c_mb/t_mb*100}
+            vm = psutil.virtual_memory()
+            # RAM Logic: Windows Style (Active vs Cache)
+            # Active = total - free - buffers - cached
+            ram_active_p = (vm.used / vm.total) * 100
+            ram_cache_p = ((vm.cached + vm.buffers) / vm.total) * 100
+            ram_used_gb = (vm.total - vm.available) / (1024**3)
+            
             du = psutil.disk_usage('/'); en = update_energy(cpu['pwr'] if cpu else 0, gpu['pwr'] if gpu else 0, cpu['temp'] if cpu else 40)
             # --- SYSTEM TELEMETRY (GOV/PRF/SCHED) ---
             gov = "N/A"; pref = "N/A"; sched = "EEVDF"
@@ -523,26 +532,29 @@ def main():
             if cpu:
                 frame.append(draw_bar(7, 3, box_w, cpu['util'], C_BLUE, "CPU", f"{cpu['util']:>4.1f}%"))
                 frame.append(draw_bar(8, 3, box_w, (cpu['ghz']/6.0)*100, cpu['boost_color'], "FREQ", f"{cpu['ghz']:>4.2f}G", cpu['boost'], cpu['boost_color']))
-                frame.append(draw_stacked_bar(9, 3, box_w, [(ram['perc_u'], C_BLUE), (ram['perc_c'], C_D_BLUE)], "RAM", f"{ram['perc_u']+ram['perc_c']:>4.1f}%"))
+                ram_segs = [(ram_active_p, C_BLUE, "█"), (ram_cache_p, C_D_BLUE, "▒")]
+                frame.append(draw_stacked_bar(9, 3, box_w, ram_segs, "RAM", f"{ram_used_gb:>4.1f}G"))
                 frame.append(buf_move(10, 3) + f"Power: {C_PURPLE}{cpu['pwr']:>6}{C_RESET} | Temp: {get_temp_color(cpu['temp'])}{cpu['temp']}°C{C_RESET} {C_RED if cpu['is_alert'] else C_BLUE}[{cpu['reason']}]{C_RESET if cpu['reason'] else ''}")
             
             frame.append(draw_frame(5, half_w+1, cols-half_w, 8, g_name))
             if gpu:
                 frame.append(draw_bar(7, half_w+3, box_w, float(gpu['util']), C_GREEN, "GPU", f"{float(gpu['util']):>4.1f}%"))
                 frame.append(draw_bar(8, half_w+3, box_w, (gpu['mhz']/2100.0)*100, gpu['boost_color'], "FREQ", f"{gpu['mhz']/1000.0:>4.2f}G", gpu['boost'], gpu['boost_color']))
-                v_segs = [((int(gpu['comp_v'])/int(gpu['total']))*100, C_GREEN), ((int(gpu['sys_v'])/int(gpu['total']))*100, C_D_GREEN)]
-                frame.append(draw_stacked_bar(9, half_w+3, box_w, v_segs, "VRAM", f"{gpu['mem_percent']:>4.1f}%"))
+                v_used_gb = int(gpu['used']) / 1024
+                v_segs = [((int(gpu['comp_v'])/int(gpu['total']))*100, C_GREEN, "█"), ((int(gpu['sys_v'])/int(gpu['total']))*100, C_D_GREEN, "▒")]
+                frame.append(draw_stacked_bar(9, half_w+3, box_w, v_segs, "VRAM", f"{v_used_gb:>4.1f}G"))
                 frame.append(buf_move(10, half_w+3) + f"Power: {C_PURPLE}{int(gpu['pwr'])}W{C_RESET} | Temp: {get_temp_color(gpu['temp'])}{gpu['temp']}°C{C_RESET} {C_RED if gpu['is_alert'] else C_BLUE}[{gpu['reason']}]{C_RESET if gpu['reason'] else ''}")
 
             frame.append(draw_frame(13, 1, half_w, 6, f"{d_name} THROUGHPUT"))
-            io_segs = [((IO_SPEEDS["read"]/3500.0)*100, C_CYAN), ((IO_SPEEDS["write"]/3500.0)*100, C_GREEN)]
+            io_segs = [((IO_SPEEDS["read"]/3500.0)*100, C_CYAN, "█"), ((IO_SPEEDS["write"]/3500.0)*100, C_GREEN, "█")]
             frame.append(draw_stacked_bar(15, 3, box_w, io_segs, "DISK", f"{int(IO_SPEEDS['read']+IO_SPEEDS['write']):>4}M/s"))
             frame.append(buf_move(16, 3) + f"   {C_CYAN}Read ({int(IO_SPEEDS['read'])}MB/s){C_RESET}  {C_GREEN}Write ({int(IO_SPEEDS['write'])}MB/s){C_RESET}  {C_WHITE}Cap:{int(du.percent)}%{C_RESET}")
             
             frame.append(draw_frame(13, half_w+1, cols-half_w, 6, "ZRAM"))
             if zr:
-                zr_segs = [((zr['phys']/zr['total'])*100, C_ORANGE), (((zr['used']-zr['phys'])/zr['total'])*100, C_D_BLUE)]
-                frame.append(draw_stacked_bar(15, half_w+3, box_w, zr_segs, "ZRAM", f"{int(zr['used'])}MB"))
+                zr_used_gb = zr['used'] / 1024
+                zr_segs = [((zr['phys']/zr['total'])*100, C_ORANGE, "█"), (((zr['used']-zr['phys'])/zr['total'])*100, C_D_BLUE, "▒")]
+                frame.append(draw_stacked_bar(15, half_w+3, box_w, zr_segs, "ZRAM", f"{zr_used_gb:>4.1f}G"))
                 frame.append(buf_move(16, half_w+3) + f"   {C_ORANGE}Phys ({int(zr['phys'])}MB){C_RESET}  {C_D_BLUE}Saved ({int(zr['used']-zr['phys'])}MB){C_RESET}  {C_WHITE}Pool:{zr['percent']:.1f}%{C_RESET}")
 
             frame.append(draw_frame(19, 1, cw, 8, "PC POWER"))
