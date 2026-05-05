@@ -528,73 +528,73 @@ def main():
                 frame.append(buf_move(3, cols-15) + f"{C_GREY}UP: {uptime}{C_RESET}")
             except: pass
             
-            frame.append(draw_frame(5, 1, half_w, 8, c_name))
+            frame.append(draw_frame(5, 1, half_w, 7, c_name))
             if cpu:
-                frame.append(draw_bar(7, 3, box_w, cpu['util'], C_BLUE, "CPU", f"{cpu['util']:>4.1f}%"))
-                frame.append(draw_bar(8, 3, box_w, (cpu['ghz']/6.0)*100, cpu['boost_color'], "FREQ", f"{cpu['ghz']:>4.2f}G", cpu['boost'], cpu['boost_color']))
+                frame.append(draw_bar(6, 3, box_w, cpu['util'], C_BLUE, "CPU", f"{cpu['util']:>4.1f}%"))
+                frame.append(draw_bar(7, 3, box_w, (cpu['ghz']/6.0)*100, cpu['boost_color'], "FREQ", f"{cpu['ghz']:>4.2f}G", cpu['boost'], cpu['boost_color']))
                 ram_total_p = (1 - (vm.available / vm.total)) * 100
                 ram_segs = [(ram_active_p, C_BLUE, "█"), (ram_cache_p, C_D_BLUE, "▒")]
-                frame.append(draw_stacked_bar(9, 3, box_w, ram_segs, "RAM", f"{ram_total_p:>4.1f}%"))
+                frame.append(draw_stacked_bar(8, 3, box_w, ram_segs, "RAM", f"{ram_total_p:>4.1f}%"))
                 # Sub-labels & Telemetry
                 r_act_gb = vm.used / (1024**3); r_csh_gb = (vm.cached + vm.buffers) / (1024**3)
-                frame.append(buf_move(10, 3) + f"{C_WHITE}Active : {C_BLUE}{r_act_gb:>5.1f}G{C_RESET} {C_GREY}│{C_RESET} {C_WHITE}Cache  : {C_D_BLUE}{r_csh_gb:>5.1f}G{C_RESET}")
+                frame.append(buf_move(9, 3) + f"{C_WHITE}Active : {C_BLUE}{r_act_gb:>5.1f}G{C_RESET} {C_GREY}│{C_RESET} {C_WHITE}Cache  : {C_D_BLUE}{r_csh_gb:>5.1f}G{C_RESET}")
                 p_disp = f"{C_PURPLE}{cpu['pwr']:>6}{C_RESET}"
                 t_disp = f"{get_temp_color(cpu['temp'])}{cpu['temp']:>4.0f}°C{C_RESET}"
                 r_disp = f" {C_RED if cpu['is_alert'] else C_BLUE}[{cpu['reason']}]{C_RESET}" if cpu['reason'] else ""
-                frame.append(buf_move(11, 3) + f"{C_WHITE}Power  : {p_disp} {C_GREY}│{C_RESET} {C_WHITE}Temp   : {t_disp}{r_disp}")
+                frame.append(buf_move(10, 3) + f"{C_WHITE}Power  : {p_disp} {C_GREY}│{C_RESET} {C_WHITE}Temp   : {t_disp}{r_disp}")
             
-            frame.append(draw_frame(5, half_w+1, cols-half_w, 8, g_name))
+            frame.append(draw_frame(5, half_w+1, cols-half_w, 7, g_name))
             if gpu:
-                frame.append(draw_bar(7, half_w+3, box_w, float(gpu['util']), C_GREEN, "GPU", f"{float(gpu['util']):>4.1f}%"))
-                frame.append(draw_bar(8, half_w+3, box_w, (gpu['mhz']/2100.0)*100, gpu['boost_color'], "FREQ", f"{gpu['mhz']/1000.0:>4.2f}G", gpu['boost'], gpu['boost_color']))
+                frame.append(draw_bar(6, half_w+3, box_w, float(gpu['util']), C_GREEN, "GPU", f"{float(gpu['util']):>4.1f}%"))
+                frame.append(draw_bar(7, half_w+3, box_w, (gpu['mhz']/2100.0)*100, gpu['boost_color'], "FREQ", f"{gpu['mhz']/1000.0:>4.2f}G", gpu['boost'], gpu['boost_color']))
                 v_total_p = (int(gpu['used']) / int(gpu['total'])) * 100
                 v_segs = [((int(gpu['comp_v'])/int(gpu['total']))*100, C_GREEN, "█"), ((int(gpu['sys_v'])/int(gpu['total']))*100, C_D_GREEN, "▒")]
-                frame.append(draw_stacked_bar(9, half_w+3, box_w, v_segs, "VRAM", f"{v_total_p:>4.1f}%"))
+                frame.append(draw_stacked_bar(8, half_w+3, box_w, v_segs, "VRAM", f"{v_total_p:>4.1f}%"))
                 # Sub-labels & Telemetry
                 v_mod_gb = int(gpu['comp_v']) / 1024; v_sys_gb = int(gpu['sys_v']) / 1024
-                frame.append(buf_move(10, half_w+3) + f"{C_WHITE}Compute: {C_GREEN}{v_mod_gb:>5.1f}G{C_RESET} {C_GREY}│{C_RESET} {C_WHITE}System : {C_D_GREEN}{v_sys_gb:>5.1f}G{C_RESET}")
+                frame.append(buf_move(9, half_w+3) + f"{C_WHITE}Compute: {C_GREEN}{v_mod_gb:>5.1f}G{C_RESET} {C_GREY}│{C_RESET} {C_WHITE}System : {C_D_GREEN}{v_sys_gb:>5.1f}G{C_RESET}")
                 p_disp = f"{C_PURPLE}{int(gpu['pwr']):>5}W{C_RESET}"
                 t_disp = f"{get_temp_color(gpu['temp'])}{gpu['temp']:>4s}°C{C_RESET}"
                 r_disp = f" {C_RED if gpu['is_alert'] else C_BLUE}[{gpu['reason']}]{C_RESET}" if gpu['reason'] else ""
-                frame.append(buf_move(11, half_w+3) + f"{C_WHITE}Power  : {p_disp} {C_GREY}│{C_RESET} {C_WHITE}Temp   : {t_disp}{r_disp}")
+                frame.append(buf_move(10, half_w+3) + f"{C_WHITE}Power  : {p_disp} {C_GREY}│{C_RESET} {C_WHITE}Temp   : {t_disp}{r_disp}")
 
-            frame.append(draw_frame(13, 1, half_w, 6, f"{d_name} THROUGHPUT"))
+            frame.append(draw_frame(12, 1, half_w, 4, f"{d_name} THROUGHPUT"))
             disk_cap_p = du.percent
-            frame.append(draw_stacked_bar(15, 3, box_w, [(disk_cap_p, C_WHITE, "█")], "DISK", f"{disk_cap_p:>4.1f}%"))
+            frame.append(draw_stacked_bar(13, 3, box_w, [(disk_cap_p, C_WHITE, "█")], "DISK", f"{disk_cap_p:>4.1f}%"))
             # Sub-labels
             r_spd = IO_SPEEDS["read"]; w_spd = IO_SPEEDS["write"]
-            frame.append(buf_move(16, 3) + f"{C_WHITE}Read   : {C_CYAN}{r_spd:>5.1f}M{C_RESET} {C_GREY}│{C_RESET} {C_WHITE}Write  : {C_GREEN}{w_spd:>5.1f}M{C_RESET} {C_GREY}│{C_RESET} {C_WHITE}Cap  : {C_WHITE}{int(disk_cap_p):>3}%{C_RESET}")
+            frame.append(buf_move(14, 3) + f"{C_WHITE}Read   : {C_CYAN}{r_spd:>5.1f}M{C_RESET} {C_GREY}│{C_RESET} {C_WHITE}Write  : {C_GREEN}{w_spd:>5.1f}M{C_RESET} {C_GREY}│{C_RESET} {C_WHITE}Cap  : {C_WHITE}{int(disk_cap_p):>3}%{C_RESET}")
             
-            frame.append(draw_frame(13, half_w+1, cols-half_w, 6, "ZRAM"))
+            frame.append(draw_frame(12, half_w+1, cols-half_w, 4, "ZRAM"))
             if zr:
                 zr_segs = [((zr['phys']/zr['total'])*100, C_ORANGE, "█"), (((zr['used']-zr['phys'])/zr['total'])*100, C_D_BLUE, "▒")]
-                frame.append(draw_stacked_bar(15, half_w+3, box_w, zr_segs, "ZRAM", f"{zr['percent']:>4.1f}%"))
+                frame.append(draw_stacked_bar(13, half_w+3, box_w, zr_segs, "ZRAM", f"{zr['percent']:>4.1f}%"))
                 z_phys_gb = zr['phys'] / 1024; z_saved_gb = (zr['used']-zr['phys']) / 1024
-                frame.append(buf_move(16, half_w+3) + f"{C_WHITE}Phys   : {C_ORANGE}{z_phys_gb:>5.1f}G{C_RESET} {C_GREY}│{C_RESET} {C_WHITE}Saved  : {C_D_BLUE}{z_saved_gb:>5.1f}G{C_RESET} {C_GREY}│{C_RESET} {C_WHITE}Cap  : {C_WHITE}{int(zr['percent']):>3}%{C_RESET}")
+                frame.append(buf_move(14, half_w+3) + f"{C_WHITE}Phys   : {C_ORANGE}{z_phys_gb:>5.1f}G{C_RESET} {C_GREY}│{C_RESET} {C_WHITE}Saved  : {C_D_BLUE}{z_saved_gb:>5.1f}G{C_RESET} {C_GREY}│{C_RESET} {C_WHITE}Cap  : {C_WHITE}{int(zr['percent']):>3}%{C_RESET}")
 
-            frame.append(draw_frame(19, 1, cw, 8, "PC POWER"))
-            frame.append(buf_move(21, 3) + f"Live: {C_PURPLE}{int(en['total_w']):>4}W{C_RESET} {C_YELLOW}{en['w_t']}{C_RESET}"); frame.append(buf_move(22, 3) + f"Peak: {C_RED}{int(en['m_peak']):>4}W{C_RESET} {C_YELLOW}{en['p_t']}{C_RESET}")
-            frame.append(buf_move(23, 3) + f"Sess: {C_YELLOW}{SESSION_WH/1000:>5.2f} kWh{C_RESET}"); frame.append(buf_move(24, 3) + f"Life: {C_ORANGE}{TOTAL_WH/1000:>5.2f} kWh{C_RESET}")
-            frame.append(draw_frame(19, cw+1, cw, 8, "PERIPHERALS"))
-            frame.append(buf_move(21, cw+3) + f"Screens: {C_PURPLE}{int(DISP_WATTS):>3}W{C_RESET}")
+            frame.append(draw_frame(16, 1, cw, 6, "PC POWER"))
+            frame.append(buf_move(17, 3) + f"Live: {C_PURPLE}{int(en['total_w']):>4}W{C_RESET} {C_YELLOW}{en['w_t']}{C_RESET}"); frame.append(buf_move(18, 3) + f"Peak: {C_RED}{int(en['m_peak']):>4}W{C_RESET} {C_YELLOW}{en['p_t']}{C_RESET}")
+            frame.append(buf_move(19, 3) + f"Sess: {C_YELLOW}{SESSION_WH/1000:>5.2f} kWh{C_RESET}"); frame.append(buf_move(20, 3) + f"Life: {C_ORANGE}{TOTAL_WH/1000:>5.2f} kWh{C_RESET}")
+            frame.append(draw_frame(16, cw+1, cw, 6, "PERIPHERALS"))
+            frame.append(buf_move(17, cw+3) + f"Screens: {C_PURPLE}{int(DISP_WATTS):>3}W{C_RESET}")
             w1 = 10.0 + (55.0 * (DISP_INFO['d1'] / 100.0)); w2 = 10.0 + (70.0 * (DISP_INFO['d2'] / 100.0) * (1.3 if DISP_INFO['hdr'] else 1.0)) + (5.0 if DISP_INFO['vrr'] or DISP_INFO['hz'] > 60 else 0.0)
             tags = " ".join([x for x in [f"{C_RED}HDR{C_RESET}" if DISP_INFO['hdr'] else "", f"{C_GREEN}VRR{C_RESET}" if DISP_INFO['vrr'] else "", f"{C_CYAN}{DISP_INFO['hz']}Hz{C_RESET}"] if x])
-            frame.append(buf_move(22, cw+3) + f" AOC 34: {C_WHITE}{int(w1):>3}W{C_RESET}")
-            frame.append(buf_move(23, cw+3) + f" LG 38:  {C_WHITE}{int(w2):>3}W{C_RESET} {tags}")
-            af = get_airflow_stats(cpu['temp'] if cpu else 40); frame.append(draw_frame(19, (cw*2)+1, cw, 8, "AIRFLOW"))
+            frame.append(buf_move(18, cw+3) + f" AOC 34: {C_WHITE}{int(w1):>3}W{C_RESET}")
+            frame.append(buf_move(19, cw+3) + f" LG 38:  {C_WHITE}{int(w2):>3}W{C_RESET} {tags}")
+            af = get_airflow_stats(cpu['temp'] if cpu else 40); frame.append(draw_frame(16, (cw*2)+1, cw, 6, "AIRFLOW"))
             if af:
                 ax = (cw * 2) + 3
-                frame.append(buf_move(21, ax) + f"Gauge:  {af['gauge']}")
-                frame.append(buf_move(22, ax) + f"State:  {af['state']} ({int(af['in']-af['ex']):>+3} CFM)")
-                frame.append(buf_move(23, ax) + f"In:     {C_CYAN}{int(af['in']):>3} CFM{C_RESET}")
-                frame.append(buf_move(24, ax) + f"Ex:     {C_ORANGE}{int(af['ex']):>3} CFM{C_RESET}")
-            frame.append(draw_frame(19, (cw*3)+1, cols-(cw*3), 8, "ESTIMATES"))
+                frame.append(buf_move(17, ax) + f"Gauge:  {af['gauge']}")
+                frame.append(buf_move(18, ax) + f"State:  {af['state']} ({int(af['in']-af['ex']):>+3} CFM)")
+                frame.append(buf_move(19, ax) + f"In:     {C_CYAN}{int(af['in']):>3} CFM{C_RESET}")
+                frame.append(buf_move(20, ax) + f"Ex:     {C_ORANGE}{int(af['ex']):>3} CFM{C_RESET}")
+            frame.append(draw_frame(16, (cw*3)+1, cols-(cw*3), 6, "ESTIMATES"))
             ax = (cw*3)+3
             m_co2 = (en['d_cost'] / en['rate'] * 30) * 0.475 # Monthly kg based on daily kwh
-            frame.append(buf_move(21, ax) + f"Monthly: {C_GREEN}${en['m_cost']:>5.2f}{C_RESET} | {C_GREY}{m_co2:.1f}kg{C_RESET}")
-            frame.append(buf_move(22, ax) + f"Daily:   {C_GREEN}${en['d_cost']:>5.2f}{C_RESET} | {C_GREY}{TOTAL_CO2/1000:.1f}kg{C_RESET}")
-            frame.append(buf_move(23, ax) + f"Today:   {C_YELLOW}{en['d_kwh']:>5.2f} kWh{C_RESET} (Est)")
-            frame.append(buf_move(24, ax) + f"Util Rate: {C_CYAN}Tier {en['tier']} ({en['rate']*100:.1f}¢){C_RESET}")
+            frame.append(buf_move(17, ax) + f"Monthly: {C_GREEN}${en['m_cost']:>5.2f}{C_RESET} | {C_GREY}{m_co2:.1f}kg{C_RESET}")
+            frame.append(buf_move(18, ax) + f"Daily:   {C_GREEN}${en['d_cost']:>5.2f}{C_RESET} | {C_GREY}{TOTAL_CO2/1000:.1f}kg{C_RESET}")
+            frame.append(buf_move(19, ax) + f"Today:   {C_YELLOW}{en['d_kwh']:>5.2f} kWh{C_RESET} (Est)")
+            frame.append(buf_move(20, ax) + f"Util Rate: {C_CYAN}Tier {en['tier']} ({en['rate']*100:.1f}¢){C_RESET}")
 
             # Dynamically detect LAN IP (pre-loop or optimized in-loop)
             try:
@@ -604,7 +604,7 @@ def main():
 
             # AI SERVICES & AGENTS Layout (Meticulous Alignment)
             half_c = cols // 2
-            frame.append(draw_frame(27, 1, half_c, 5, "AI SERVICES"))
+            frame.append(draw_frame(22, 1, half_c, 5, "AI SERVICES"))
             for i, (n, u, k) in enumerate([("COMFY", "comfyui.service", 'y'), ("WEBUI", "sd-webui.service", 'u'), ("OLLAMA", "ollama.service", 'o')]):
                 st = SERVICE_STATES[u]; act = st["active"]; rdy = act and is_port_open(st["port"])
                 status = f"{C_GREEN}● RDY{C_RESET}" if rdy else (f"{C_YELLOW}◐ BOOT{C_RESET}" if act else f"{C_GREY}○ OFF{C_RESET}")
@@ -618,9 +618,9 @@ def main():
                     ip_disp = " " * 21
                 
                 line = f"{C_BOLD}{n:<7}{C_RESET} {ip_disp} [{k}]  {status}"
-                frame.append(buf_move(28 + i, 3) + line)
+                frame.append(buf_move(23 + i, 3) + line)
 
-            frame.append(draw_frame(27, half_c + 1, cols - half_c, 5, "AGENTS"))
+            frame.append(draw_frame(22, half_c + 1, cols - half_c, 5, "AGENTS"))
             for i, (n, u, k, p) in enumerate([("HERMS", "hermes-agent.service", 'h', "DISCORD")]):
                 st = SERVICE_STATES[u]; act = st["active"]
                 status = f"{C_GREEN}● RDY{C_RESET}" if act else f"{C_GREY}○ OFF{C_RESET}"
@@ -634,14 +634,14 @@ def main():
                     ip_disp = " " * 21
                 
                 line = f"{C_BOLD}{n:<7}{C_RESET} {ip_disp} [{k}]  {status}"
-                frame.append(buf_move(28 + i, half_c + 3) + line)
+                frame.append(buf_move(23 + i, half_c + 3) + line)
 
-            # Adjust Feed start to row 32
-            avail_h = rows - 35; h2 = max(4, avail_h // 4); h1 = avail_h - h2
-            frame.append(draw_frame(32, 1, cols, h1, "ACTIVITY FEED"))
-            hist_l = list(LOG_HISTORY); [frame.append(buf_move(33 + i, 3) + f"\033[K{line}") for i, line in enumerate(hist_l[-(h1-2):])]
-            frame.append(draw_frame(32 + h1, 1, cols, h2, "SYSTEM JOURNAL"))
-            hist_j = list(JOURNAL_HISTORY); [frame.append(buf_move(33 + h1 + i, 3) + f"\033[K{line}") for i, line in enumerate(hist_j[-(h2-2):])]
+            # Adjust Feed start to row 27
+            avail_h = rows - 30; h2 = max(4, avail_h // 4); h1 = avail_h - h2
+            frame.append(draw_frame(27, 1, cols, h1, "ACTIVITY FEED"))
+            hist_l = list(LOG_HISTORY); [frame.append(buf_move(28 + i, 3) + f"\033[K{line}") for i, line in enumerate(hist_l[-(h1-2):])]
+            frame.append(draw_frame(27 + h1, 1, cols, h2, "SYSTEM JOURNAL"))
+            hist_j = list(JOURNAL_HISTORY); [frame.append(buf_move(28 + h1 + i, 3) + f"\033[K{line}") for i, line in enumerate(hist_j[-(h2-2):])]
 
             msg = f"{C_BOLD}{C_YELLOW}>> {C_RESET}{C_WHITE}{LAST_CMD}{C_RESET}" if time.time() < CMD_EXPIRE else f"{C_GREY}Awaiting...{C_RESET}"
             frame.append(draw_frame(rows-3, 1, cols, 3, f"COMMAND | RATE: {int(POLL_RATE*1000)}ms"))
