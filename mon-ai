@@ -563,14 +563,14 @@ def main():
             frame.append(draw_stacked_bar(15, 3, box_w, [(disk_cap_p, C_WHITE, "█")], "DISK", f"{disk_cap_p:>4.1f}%"))
             # Sub-labels
             r_spd = IO_SPEEDS["read"]; w_spd = IO_SPEEDS["write"]
-            frame.append(buf_move(16, 3) + f"{C_WHITE}Read   : {C_CYAN}{r_spd:>5.1f}M{C_RESET} {C_GREY}│{C_RESET} {C_WHITE}Write  : {C_GREEN}{w_spd:>5.1f}M{C_RESET} {C_GREY}│{C_RESET} {C_WHITE}Cap    : {C_WHITE}{int(disk_cap_p):>3}%{C_RESET}")
+            frame.append(buf_move(16, 3) + f"{C_WHITE}Read   : {C_CYAN}{r_spd:>5.1f}M{C_RESET} {C_GREY}│{C_RESET} {C_WHITE}Write  : {C_GREEN}{w_spd:>5.1f}M{C_RESET} {C_GREY}│{C_RESET} {C_WHITE}Cap  : {C_WHITE}{int(disk_cap_p):>3}%{C_RESET}")
             
             frame.append(draw_frame(13, half_w+1, cols-half_w, 6, "ZRAM"))
             if zr:
                 zr_segs = [((zr['phys']/zr['total'])*100, C_ORANGE, "█"), (((zr['used']-zr['phys'])/zr['total'])*100, C_D_BLUE, "▒")]
                 frame.append(draw_stacked_bar(15, half_w+3, box_w, zr_segs, "ZRAM", f"{zr['percent']:>4.1f}%"))
                 z_phys_gb = zr['phys'] / 1024; z_saved_gb = (zr['used']-zr['phys']) / 1024
-                frame.append(buf_move(16, half_w+3) + f"{C_WHITE}Phys   : {C_ORANGE}{z_phys_gb:>5.1f}G{C_RESET} {C_GREY}│{C_RESET} {C_WHITE}Saved  : {C_D_BLUE}{z_saved_gb:>5.1f}G{C_RESET} {C_GREY}│{C_RESET} {C_WHITE}Cap    : {C_WHITE}{int(zr['percent']):>3}%{C_RESET}")
+                frame.append(buf_move(16, half_w+3) + f"{C_WHITE}Phys   : {C_ORANGE}{z_phys_gb:>5.1f}G{C_RESET} {C_GREY}│{C_RESET} {C_WHITE}Saved  : {C_D_BLUE}{z_saved_gb:>5.1f}G{C_RESET} {C_GREY}│{C_RESET} {C_WHITE}Cap  : {C_WHITE}{int(zr['percent']):>3}%{C_RESET}")
 
             frame.append(draw_frame(19, 1, cw, 8, "PC POWER"))
             frame.append(buf_move(21, 3) + f"Live: {C_PURPLE}{int(en['total_w']):>4}W{C_RESET} {C_YELLOW}{en['w_t']}{C_RESET}"); frame.append(buf_move(22, 3) + f"Peak: {C_RED}{int(en['m_peak']):>4}W{C_RESET} {C_YELLOW}{en['p_t']}{C_RESET}")
