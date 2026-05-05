@@ -532,18 +532,27 @@ def main():
             if cpu:
                 frame.append(draw_bar(7, 3, box_w, cpu['util'], C_BLUE, "CPU", f"{cpu['util']:>4.1f}%"))
                 frame.append(draw_bar(8, 3, box_w, (cpu['ghz']/6.0)*100, cpu['boost_color'], "FREQ", f"{cpu['ghz']:>4.2f}G", cpu['boost'], cpu['boost_color']))
+                ram_total_p = (1 - (vm.available / vm.total)) * 100
                 ram_segs = [(ram_active_p, C_BLUE, "█"), (ram_cache_p, C_D_BLUE, "▒")]
-                frame.append(draw_stacked_bar(9, 3, box_w, ram_segs, "RAM", f"{ram_used_gb:>4.1f}G"))
-                frame.append(buf_move(10, 3) + f"Power: {C_PURPLE}{cpu['pwr']:>6}{C_RESET} | Temp: {get_temp_color(cpu['temp'])}{cpu['temp']}°C{C_RESET} {C_RED if cpu['is_alert'] else C_BLUE}[{cpu['reason']}]{C_RESET if cpu['reason'] else ''}")
+                frame.append(draw_stacked_bar(9, 3, box_w, ram_segs, "RAM", f"{ram_total_p:>4.1f}%"))
+                # Sub-labels
+                r_act_gb = vm.used / (1024**3); r_csh_gb = (vm.cached + vm.buffers) / (1024**3)
+                frame.append(buf_move(10, 3) + f"{C_GREY}Active: {C_BLUE}{r_act_gb:.1f}G{C_RESET} {C_GREY}| Cache: {C_D_BLUE}{r_csh_gb:.1f}G{C_RESET}")
+                # Telemetry
+                frame.append(buf_move(11, 3) + f"Power: {C_PURPLE}{cpu['pwr']:>6}{C_RESET} | Temp: {get_temp_color(cpu['temp'])}{cpu['temp']}°C{C_RESET} {C_RED if cpu['is_alert'] else C_BLUE}[{cpu['reason']}]{C_RESET if cpu['reason'] else ''}")
             
             frame.append(draw_frame(5, half_w+1, cols-half_w, 8, g_name))
             if gpu:
                 frame.append(draw_bar(7, half_w+3, box_w, float(gpu['util']), C_GREEN, "GPU", f"{float(gpu['util']):>4.1f}%"))
                 frame.append(draw_bar(8, half_w+3, box_w, (gpu['mhz']/2100.0)*100, gpu['boost_color'], "FREQ", f"{gpu['mhz']/1000.0:>4.2f}G", gpu['boost'], gpu['boost_color']))
-                v_used_gb = int(gpu['used']) / 1024
+                v_total_p = (int(gpu['used']) / int(gpu['total'])) * 100
                 v_segs = [((int(gpu['comp_v'])/int(gpu['total']))*100, C_GREEN, "█"), ((int(gpu['sys_v'])/int(gpu['total']))*100, C_D_GREEN, "▒")]
-                frame.append(draw_stacked_bar(9, half_w+3, box_w, v_segs, "VRAM", f"{v_used_gb:>4.1f}G"))
-                frame.append(buf_move(10, half_w+3) + f"Power: {C_PURPLE}{int(gpu['pwr'])}W{C_RESET} | Temp: {get_temp_color(gpu['temp'])}{gpu['temp']}°C{C_RESET} {C_RED if gpu['is_alert'] else C_BLUE}[{gpu['reason']}]{C_RESET if gpu['reason'] else ''}")
+                frame.append(draw_stacked_bar(9, half_w+3, box_w, v_segs, "VRAM", f"{v_total_p:>4.1f}%"))
+                # Sub-labels
+                v_mod_gb = int(gpu['comp_v']) / 1024; v_sys_gb = int(gpu['sys_v']) / 1024
+                frame.append(buf_move(10, half_w+3) + f"{C_GREY}Model: {C_GREEN}{v_mod_gb:.1f}G{C_RESET} {C_GREY}| System: {C_D_GREEN}{v_sys_gb:.1f}G{C_RESET}")
+                # Telemetry
+                frame.append(buf_move(11, half_w+3) + f"Power: {C_PURPLE}{int(gpu['pwr'])}W{C_RESET} | Temp: {get_temp_color(gpu['temp'])}{gpu['temp']}°C{C_RESET} {C_RED if gpu['is_alert'] else C_BLUE}[{gpu['reason']}]{C_RESET if gpu['reason'] else ''}")
 
             frame.append(draw_frame(13, 1, half_w, 6, f"{d_name} THROUGHPUT"))
             io_segs = [((IO_SPEEDS["read"]/3500.0)*100, C_CYAN, "█"), ((IO_SPEEDS["write"]/3500.0)*100, C_GREEN, "█")]
